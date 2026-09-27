@@ -1513,3 +1513,964 @@ Django returns:
 ```
 
 The more effectively you can express your requirements through the ORM, the less unnecessary work your Django application has to perform in Python.
+
+# Django Related Models, Lowercase Accessors & `related_name`
+
+## 1. The Basic Idea
+
+Django relationships can be accessed from **both directions**.
+
+For example:
+
+```python
+class ResearchOrder(models.Model):
+    title = models.CharField(max_length=200)
+
+class Phase(models.Model):
+    order = models.ForeignKey(
+        ResearchOrder,
+        on_delete=models.CASCADE,
+    )
+```
+
+From `Phase` to `ResearchOrder`:
+
+```python
+phase.order
+```
+
+From `ResearchOrder` back to `Phase`, Django creates a default reverse accessor:
+
+```python
+order.phase_set.all()
+```
+
+If you define a `related_name`, you can replace `phase_set` with a clearer name such as `phases`.
+
+---
+
+## 2. Forward Relationship
+
+The model containing the `ForeignKey` is `Phase`:
+
+```python
+class Phase(models.Model):
+    order = models.ForeignKey(
+        ResearchOrder,
+        on_delete=models.CASCADE,
+    )
+```
+
+The field name is:
+
+```python
+order
+```
+
+Therefore:
+
+```python
+phase.order
+```
+
+The important rule is:
+
+> The ForeignKey field name is used from the model containing the ForeignKey.
+
+Think of it as:
+
+```text
+Phase
+  |
+  | order
+  ↓
+ResearchOrder
+```
+
+---
+
+## 3. Reverse Relationship
+
+Suppose:
+
+```python
+order = ResearchOrder.objects.get(id=1)
+```
+
+You want all phases belonging to that order.
+
+Without `related_name`, Django creates a default reverse accessor:
+
+```python
+order.phase_set.all()
+```
+
+For a ForeignKey/reverse one-to-many relationship, Django generally uses:
+
+```text
+lowercase model name + "_set"
+```
+
+So:
+
+```text
+Phase
+  ↓
+phase
+  ↓
+phase_set
+```
+
+Another example:
+
+```python
+class Activity(models.Model):
+    phase = models.ForeignKey(
+        Phase,
+        on_delete=models.CASCADE,
+    )
+```
+
+The default reverse accessor from `Phase` is:
+
+```python
+phase.activity_set.all()
+```
+
+And for:
+
+```python
+class Task(models.Model):
+    activity = models.ForeignKey(
+        Activity,
+        on_delete=models.CASCADE,
+    )
+```
+
+the reverse accessor is:
+
+```python
+activity.task_set.all()
+```
+
+---
+
+## 4. Do Not Think of This as "Django Always Lowercases Model Names"
+
+It is better to think of it as Django's **default naming convention for reverse relationship accessors**.
+
+For example:
+
+```python
+class Phase(models.Model):
+    order = models.ForeignKey(...)
+```
+
+The forward field is explicitly:
+
+```python
+order
+```
+
+The reverse accessor is automatically generated as:
+
+```python
+phase_set
+```
+
+So the two concepts are separate.
+
+---
+
+# 5. Using `related_name`
+
+Instead of:
+
+```python
+order.phase_set.all()
+```
+
+you can define:
+
+```python
+class Phase(models.Model):
+    order = models.ForeignKey(
+        ResearchOrder,
+        on_delete=models.CASCADE,
+        related_name="phases",
+    )
+```
+
+Now:
+
+```python
+order.phases.all()
+```
+
+works.
+
+The `related_name` gives the reverse relationship a custom, readable name.
+
+---
+
+## 6. The Most Important Distinction
+
+For:
+
+```python
+class Phase(models.Model):
+    order = models.ForeignKey(
+        ResearchOrder,
+        on_delete=models.CASCADE,
+        related_name="phases",
+    )
+```
+
+there are two important names.
+
+### `order`
+
+This is the **forward relationship field**:
+
+```python
+phase.order
+```
+
+### `phases`
+
+This is the **reverse relationship name**:
+
+```python
+order.phases.all()
+```
+
+Mental model:
+
+```text
+field_name
+    ↓
+used from the model containing the ForeignKey
+
+related_name
+    ↓
+used from the model being pointed to
+```
+
+---
+
+# 7. One-to-One Relationships
+
+`related_name` also works with `OneToOneField`.
+
+```python
+class UserProfile(models.Model):
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="profile",
+    )
+```
+
+Forward:
+
+```python
+profile.user
+```
+
+Reverse:
+
+```python
+user.profile
+```
+
+Unlike a reverse ForeignKey, you do not normally use `.all()` because there can only be one related object.
+
+Think:
+
+```text
+UserProfile → User
+     user
+
+User → UserProfile
+       profile
+```
+
+---
+
+# 8. Many-to-Many Relationships
+
+Example:
+
+```python
+class ResearchOrder(models.Model):
+    collaborators = models.ManyToManyField(
+        User,
+        related_name="collaborated_orders",
+    )
+```
+
+From the order:
+
+```python
+order.collaborators.all()
+```
+
+From the user:
+
+```python
+user.collaborated_orders.all()
+```
+
+So:
+
+```text
+ResearchOrder → Users
+    collaborators
+
+User → ResearchOrders
+    collaborated_orders
+```
+
+---
+
+# 9. Your Innovision RaaS Example
+
+Your RaaS hierarchy is roughly:
+
+```text
+ResearchOrder
+    ↓
+Phase
+    ↓
+Activity
+    ↓
+Task
+```
+
+A clean relationship setup is:
+
+```python
+class ResearchOrder(models.Model):
+    client = models.ForeignKey(
+        UserProfile,
+        on_delete=models.CASCADE,
+        related_name="research_orders",
+    )
+
+
+class Phase(models.Model):
+    order = models.ForeignKey(
+        ResearchOrder,
+        on_delete=models.CASCADE,
+        related_name="phases",
+    )
+
+
+class Activity(models.Model):
+    phase = models.ForeignKey(
+        Phase,
+        on_delete=models.CASCADE,
+        related_name="activities",
+    )
+
+
+class Task(models.Model):
+    activity = models.ForeignKey(
+        Activity,
+        on_delete=models.CASCADE,
+        related_name="tasks",
+    )
+```
+
+This gives you very readable navigation.
+
+---
+
+# 10. Reverse Navigation in RaaS
+
+From the client:
+
+```python
+client.research_orders.all()
+```
+
+From the research order:
+
+```python
+order.phases.all()
+```
+
+From the phase:
+
+```python
+phase.activities.all()
+```
+
+From the activity:
+
+```python
+activity.tasks.all()
+```
+
+The relationship chain becomes:
+
+```text
+CLIENT
+  |
+  | research_orders
+  ↓
+RESEARCH ORDER
+  |
+  | phases
+  ↓
+PHASE
+  |
+  | activities
+  ↓
+ACTIVITY
+  |
+  | tasks
+  ↓
+TASK
+```
+
+---
+
+# 11. Forward Navigation in RaaS
+
+You can also move in the opposite direction.
+
+From a phase:
+
+```python
+phase.order
+```
+
+From an activity:
+
+```python
+activity.phase
+```
+
+From a task:
+
+```python
+task.activity
+```
+
+So:
+
+```text
+TASK
+  |
+  | activity
+  ↓
+ACTIVITY
+  |
+  | phase
+  ↓
+PHASE
+  |
+  | order
+  ↓
+RESEARCH ORDER
+```
+
+---
+
+# 12. `related_name` and QuerySets
+
+`related_name` is also used when querying through relationships.
+
+For example:
+
+```python
+ResearchOrder.objects.filter(
+    phases__status="completed"
+)
+```
+
+Here:
+
+```python
+phases
+```
+
+comes from:
+
+```python
+related_name="phases"
+```
+
+Django follows:
+
+```text
+ResearchOrder
+    ↓ phases
+Phase
+    ↓ status
+```
+
+So:
+
+```python
+phases__status="completed"
+```
+
+means:
+
+> Find research orders that have a related phase whose status is `completed`.
+
+---
+
+# 13. `related_name` with `annotate()`
+
+This becomes especially useful with aggregation.
+
+```python
+from django.db.models import Count
+
+orders = ResearchOrder.objects.annotate(
+    phase_count=Count("phases")
+)
+```
+
+Because the relationship is:
+
+```python
+related_name="phases"
+```
+
+we use:
+
+```python
+Count("phases")
+```
+
+Then:
+
+```python
+for order in orders:
+    print(order.title)
+    print(order.phase_count)
+```
+
+---
+
+# 14. Nested Relationships
+
+Your RaaS model structure also allows nested queries.
+
+For example:
+
+```python
+ResearchOrder.objects.filter(
+    phases__activities__tasks__status="completed"
+)
+```
+
+Django follows:
+
+```text
+ResearchOrder
+    ↓ phases
+Phase
+    ↓ activities
+Activity
+    ↓ tasks
+Task
+    ↓ status
+```
+
+The double underscore:
+
+```python
+__
+```
+
+is used to traverse relationships in query expressions.
+
+---
+
+# 15. `related_query_name`
+
+There is another option called:
+
+```python
+related_query_name
+```
+
+For example:
+
+```python
+class Phase(models.Model):
+    order = models.ForeignKey(
+        ResearchOrder,
+        on_delete=models.CASCADE,
+        related_name="phases",
+        related_query_name="phase",
+    )
+```
+
+The two options have different purposes.
+
+### `related_name`
+
+Controls the reverse object accessor:
+
+```python
+order.phases.all()
+```
+
+### `related_query_name`
+
+Controls the name available for certain query lookups.
+
+This is more advanced.
+
+For now, focus on mastering:
+
+```python
+related_name
+```
+
+---
+
+# 16. The Two Questions to Ask Yourself
+
+Whenever you see:
+
+```python
+class Phase(models.Model):
+    order = models.ForeignKey(
+        ResearchOrder,
+        on_delete=models.CASCADE,
+        related_name="phases",
+    )
+```
+
+ask:
+
+### Question 1: Which model contains the ForeignKey?
+
+Answer:
+
+```text
+Phase
+```
+
+Therefore, from Phase:
+
+```python
+phase.order
+```
+
+### Question 2: What is the `related_name`?
+
+Answer:
+
+```text
+phases
+```
+
+Therefore, from ResearchOrder:
+
+```python
+order.phases.all()
+```
+
+That's the core concept.
+
+---
+
+# 17. Default vs Custom Reverse Names
+
+Without `related_name`:
+
+```python
+class Phase(models.Model):
+    order = models.ForeignKey(
+        ResearchOrder,
+        on_delete=models.CASCADE,
+    )
+```
+
+Reverse:
+
+```python
+order.phase_set.all()
+```
+
+With `related_name`:
+
+```python
+class Phase(models.Model):
+    order = models.ForeignKey(
+        ResearchOrder,
+        on_delete=models.CASCADE,
+        related_name="phases",
+    )
+```
+
+Reverse:
+
+```python
+order.phases.all()
+```
+
+Comparison:
+
+```text
+WITHOUT related_name
+order.phase_set.all()
+
+WITH related_name
+order.phases.all()
+```
+
+---
+
+# 18. Why `related_name` Is Useful
+
+Imagine your application has:
+
+```text
+ResearchOrder
+Phase
+Activity
+Task
+Comment
+Attachment
+Collaborator
+```
+
+Without custom names, you might have:
+
+```python
+order.phase_set.all()
+order.comment_set.all()
+order.attachment_set.all()
+
+phase.activity_set.all()
+
+activity.task_set.all()
+```
+
+With meaningful `related_name` values:
+
+```python
+order.phases.all()
+order.comments.all()
+order.attachments.all()
+
+phase.activities.all()
+
+activity.tasks.all()
+```
+
+The code becomes easier to read and understand.
+
+---
+
+# 19. Common Mistake: Confusing the Two Names
+
+Given:
+
+```python
+class Phase(models.Model):
+    order = models.ForeignKey(
+        ResearchOrder,
+        related_name="phases",
+        on_delete=models.CASCADE,
+    )
+```
+
+This is wrong:
+
+```python
+phase.phases
+```
+
+Why?
+
+Because `phases` is the reverse relationship name on `ResearchOrder`.
+
+Correct:
+
+```python
+phase.order
+```
+
+And:
+
+```python
+order.phases.all()
+```
+
+---
+
+# 20. Common Mistake: Thinking `related_name` Renames the ForeignKey
+
+This:
+
+```python
+related_name="phases"
+```
+
+does **not** rename:
+
+```python
+order
+```
+
+The ForeignKey field is still:
+
+```python
+order
+```
+
+So:
+
+```python
+phase.order
+```
+
+remains correct.
+
+`related_name` only changes how the relationship is accessed from the other side.
+
+---
+
+# 21. Common Mistake: Forgetting `.all()`
+
+For a reverse ForeignKey relationship:
+
+```python
+order.phases
+```
+
+gives you a related manager.
+
+Usually you use:
+
+```python
+order.phases.all()
+```
+
+You can also:
+
+```python
+order.phases.filter(status="completed")
+```
+
+Check existence:
+
+```python
+order.phases.filter(status="completed").exists()
+```
+
+Count:
+
+```python
+order.phases.count()
+```
+
+---
+
+# 22. Relationship Cheat Sheet
+
+| Relationship | Forward | Reverse |
+|---|---|---|
+| ForeignKey | `phase.order` | `order.phases.all()` |
+| OneToOne | `profile.user` | `user.profile` |
+| ManyToMany | `order.collaborators.all()` | `user.collaborated_orders.all()` |
+
+The exact reverse name depends on your `related_name`.
+
+---
+
+# 23. Final Mental Picture
+
+Think of a ForeignKey as an arrow:
+
+```text
+Phase
+  |
+  | order
+  ↓
+ResearchOrder
+```
+
+The field defined on `Phase` is:
+
+```python
+order
+```
+
+Django can also travel backwards:
+
+```text
+ResearchOrder
+  |
+  | phases
+  ↓
+Phase
+```
+
+The reverse name is:
+
+```python
+related_name="phases"
+```
+
+Therefore:
+
+```python
+phase.order
+```
+
+means:
+
+> Give me the ResearchOrder belonging to this Phase.
+
+While:
+
+```python
+order.phases.all()
+```
+
+means:
+
+> Give me all the Phases belonging to this ResearchOrder.
+
+---
+
+# 24. One Sentence to Remember
+
+> **The ForeignKey field name is used from the model that contains the ForeignKey; `related_name` is used from the model being pointed to.**
+
+Example:
+
+```python
+class Phase(models.Model):
+    order = models.ForeignKey(
+        ResearchOrder,
+        on_delete=models.CASCADE,
+        related_name="phases",
+    )
+```
+
+Therefore:
+
+```python
+phase.order
+```
+
+and:
+
+```python
+order.phases.all()
+```
+
+That's the core of Django reverse relationships.
+
